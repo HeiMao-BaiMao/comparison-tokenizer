@@ -335,8 +335,19 @@ let allTokenizers = [];
 let activeIds = new Set();
 let debounceTimer = null;
 let lastTokenData = {};
+let sessionId = "";
+
+function getSessionId() {
+  let sid = localStorage.getItem("tokenizer_session_id");
+  if (!sid) {
+    sid = crypto.randomUUID();
+    localStorage.setItem("tokenizer_session_id", sid);
+  }
+  return sid;
+}
 
 async function init() {
+  sessionId = getSessionId();
   try {
     const res = await fetch("/api/tokenizers");
     const data = await res.json();
@@ -407,8 +418,14 @@ async function triggerTokenize() {
     const res = await fetch("/api/tokenize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, tokenizers: [...activeIds] }),
+      body: JSON.stringify({ text: text, tokenizers: [...activeIds], session_id: sessionId }),
     });
+    if (res.status === 429) {
+      const data = await res.json();
+      document.getElementById("resultsArea").innerHTML =
+        `<div class="error-card"><div class="error-title">Rate Limit</div><div class="error-msg">${escapeHtml(data.error)}</div></div>`;
+      return;
+    }
     const data = await res.json();
     renderResults(data.results, data.char_count);
   } catch (e) {

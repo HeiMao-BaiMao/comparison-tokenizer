@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
@@ -29,7 +31,24 @@ except ImportError:
     HAS_SENTENCEPIECE = False
     logger.warning("sentencepiece not installed")
 
-app = FastAPI(title="Tokenizer Comparison", version="2.0.0")
+app = FastAPI(title="Tokenizer Comparison", version="3.0.0")
+
+MAX_CONCURRENT_LOADS = 3
+RATE_LIMIT_WINDOW = 60
+RATE_LIMIT_MAX = 30
+
+_tokenizer_cache = {}
+_load_locks: dict[str, asyncio.Lock] = {}
+_load_semaphore = asyncio.Semaphore(MAX_CONCURRENT_LOADS)
+_session_requests: dict[str, list[float]] = {}
+
+
+def _cleanup_rate_limits():
+    now = time.time()
+    expired = [sid for sid, times in _session_requests.items()
+               if not times or now - times[-1] > RATE_LIMIT_WINDOW * 2]
+    for sid in expired:
+        del _session_requests[sid]
 
 
 @dataclass
@@ -125,51 +144,149 @@ TOKENIZER_DEFS = [
     ),
 ]
 
-_tokenizer_cache = {}
 
-
-def get_tokenizer(defn: TokenizerDef):
+async def get_tokenizer(defn: TokenizerDef):
     if defn.id in _tokenizer_cache:
         return _tokenizer_cache[defn.id]
 
-    try:
-        if defn.type == "tiktoken":
-            tokenizer = tiktoken.get_encoding(defn.encoding)
-            _tokenizer_cache[defn.id] = tokenizer
-            return tokenizer
-        elif defn.type == "transformers":
-            if not HAS_TRANSFORMERS:
-                raise ImportError("transformers package not installed")
-            kwargs = {"trust_remote_code": defn.trust_remote_code}
-            if defn.hf_token_env:
-                token = os.getenv(defn.hf_token_env)
-                if token:
-                    kwargs["token"] = token
-                else:
-                    raise ValueError(
-                        f"Environment variable '{defn.hf_token_env}' not set. "
-                        "Set it or create a .env file with this key."
+    if defn.id not in _load_locks:
+        _load_locks[defn.id] = asyncio.Lock()
+
+    async with _load_locks[defn.id]:
+        if defn.id in _tokenizer_cache:
+            return _tokenizer_cache[defn.id]
+
+        try:
+            if defn.type == "tiktoken":
+                tokenizer = await asyncio.to_thread(
+                    tiktoken.get_encoding, defn.encoding
+                )
+            elif defn.type == "transformers":
+                if not HAS_TRANSFORMERS:
+                    raise ImportError("transformers package not installed")
+                kwargs = {"trust_remote_code": defn.trust_remote_code}
+                if defn.hf_token_env:
+                    token = os.getenv(defn.hf_token_env)
+                    if token:
+                        kwargs["token"] = token
+                    else:
+                        raise ValueError(
+                            f"Environment variable '{defn.hf_token_env}' not set."
+                        )
+                async with _load_semaphore:
+                    tokenizer = await asyncio.to_thread(
+                        AutoTokenizer.from_pretrained, defn.model_id, **kwargs
                     )
-            tokenizer = AutoTokenizer.from_pretrained(defn.model_id, **kwargs)
+            elif defn.type == "sentencepiece":
+                if not HAS_SENTENCEPIECE:
+                    raise ImportError("sentencepiece package not installed")
+                model_path = Path(__file__).parent / defn.model_path
+
+                def _load_sp():
+                    return spm.SentencePieceProcessor(model_file=str(model_path))
+
+                tokenizer = await asyncio.to_thread(_load_sp)
+            else:
+                raise ValueError(f"Unknown tokenizer type: {defn.type}")
+
             _tokenizer_cache[defn.id] = tokenizer
             return tokenizer
-        elif defn.type == "sentencepiece":
-            if not HAS_SENTENCEPIECE:
-                raise ImportError("sentencepiece package not installed")
-            model_path = Path(__file__).parent / defn.model_path
-            tokenizer = spm.SentencePieceProcessor(model_file=str(model_path))
-            _tokenizer_cache[defn.id] = tokenizer
-            return tokenizer
-    except Exception as e:
-        defn.available = False
-        defn.error_msg = str(e)[:300]
-        logger.warning(f"Failed to load {defn.id}: {e}")
-        return None
+        except Exception as e:
+            defn.available = False
+            defn.error_msg = str(e)[:300]
+            logger.warning(f"Failed to load {defn.id}: {e}")
+            return None
 
 
 class TokenizeRequest(BaseModel):
     text: str
     tokenizers: list[str] = []
+    session_id: str = ""
+
+
+def _check_rate_limit(session_id: str) -> bool:
+    if not session_id:
+        return True
+    now = time.time()
+    times = _session_requests.get(session_id, [])
+    times = [t for t in times if now - t < RATE_LIMIT_WINDOW]
+    if len(times) >= RATE_LIMIT_MAX:
+        return False
+    times.append(now)
+    _session_requests[session_id] = times
+    if len(_session_requests) > 1000:
+        _cleanup_rate_limits()
+    return True
+
+
+def _run_tiktoken(tokenizer, text: str):
+    token_ids = tokenizer.encode(text)
+    tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
+    return token_ids, tokens
+
+
+def _run_sentencepiece(tokenizer, text: str):
+    token_ids = tokenizer.encode(text)
+    tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
+    return token_ids, tokens
+
+
+def _run_transformers(tokenizer, text: str):
+    encoding = tokenizer.encode(text)
+    token_ids = encoding.ids if hasattr(encoding, "ids") else encoding
+    tokens = []
+    for token_id in token_ids:
+        try:
+            decoded = tokenizer.decode([token_id])
+            tokens.append(decoded if decoded else f"[{token_id}]")
+        except Exception:
+            tokens.append(f"[{token_id}]")
+    return token_ids, tokens
+
+
+async def _tokenize_one(defn: TokenizerDef, text: str):
+    tokenizer = await get_tokenizer(defn)
+    if not tokenizer:
+        return {
+            "tokenizer_id": defn.id,
+            "tokenizer_name": defn.name,
+            "provider": defn.provider,
+            "error": defn.error_msg,
+            "available": False,
+        }
+
+    try:
+        if defn.type == "tiktoken":
+            token_ids, tokens = await asyncio.to_thread(
+                _run_tiktoken, tokenizer, text
+            )
+        elif defn.type == "sentencepiece":
+            token_ids, tokens = await asyncio.to_thread(
+                _run_sentencepiece, tokenizer, text
+            )
+        else:
+            token_ids, tokens = await asyncio.to_thread(
+                _run_transformers, tokenizer, text
+            )
+
+        return {
+            "tokenizer_id": defn.id,
+            "tokenizer_name": defn.name,
+            "provider": defn.provider,
+            "token_count": len(token_ids),
+            "char_count": len(text),
+            "tokens": tokens,
+            "token_ids": token_ids,
+            "available": True,
+        }
+    except Exception as e:
+        return {
+            "tokenizer_id": defn.id,
+            "tokenizer_name": defn.name,
+            "provider": defn.provider,
+            "error": str(e)[:300],
+            "available": False,
+        }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -182,7 +299,7 @@ async def index():
 async def list_tokenizers():
     result = []
     for d in TOKENIZER_DEFS:
-        tokenizer = get_tokenizer(d)
+        tokenizer = await get_tokenizer(d)
         result.append({
             "id": d.id,
             "name": d.name,
@@ -200,61 +317,21 @@ async def tokenize(req: TokenizeRequest):
     if not text.strip():
         return JSONResponse({"error": "Text cannot be empty"}, status_code=400)
 
-    results = []
-    for tid in req.tokenizers:
-        defn = next((d for d in TOKENIZER_DEFS if d.id == tid), None)
-        if not defn:
-            continue
+    if not _check_rate_limit(req.session_id):
+        return JSONResponse(
+            {"error": f"Rate limit exceeded ({RATE_LIMIT_MAX} req/{RATE_LIMIT_WINDOW}s)"},
+            status_code=429,
+        )
 
-        tokenizer = get_tokenizer(defn)
-        if not tokenizer:
-            results.append({
-                "tokenizer_id": tid,
-                "tokenizer_name": defn.name,
-                "provider": defn.provider,
-                "error": defn.error_msg,
-                "available": False,
-            })
-            continue
+    defns = [d for d in TOKENIZER_DEFS if d.id in req.tokenizers]
+    if not defns:
+        return JSONResponse({"error": "No valid tokenizers selected"}, status_code=400)
 
-        try:
-            if defn.type == "tiktoken":
-                token_ids = tokenizer.encode(text)
-                tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
-            elif defn.type == "sentencepiece":
-                token_ids = tokenizer.encode(text)
-                tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
-            else:
-                encoding = tokenizer.encode(text)
-                token_ids = encoding.ids if hasattr(encoding, "ids") else encoding
-                tokens = []
-                for token_id in token_ids:
-                    try:
-                        decoded = tokenizer.decode([token_id])
-                        tokens.append(decoded if decoded else f"[{token_id}]")
-                    except Exception:
-                        tokens.append(f"[{token_id}]")
-
-            results.append({
-                "tokenizer_id": tid,
-                "tokenizer_name": defn.name,
-                "provider": defn.provider,
-                "token_count": len(token_ids),
-                "char_count": len(text),
-                "tokens": tokens,
-                "token_ids": token_ids,
-                "available": True,
-            })
-        except Exception as e:
-            results.append({
-                "tokenizer_id": tid,
-                "tokenizer_name": defn.name,
-                "provider": defn.provider,
-                "error": str(e)[:300],
-                "available": False,
-            })
+    tasks = [_tokenize_one(d, text) for d in defns]
+    results = await asyncio.gather(*tasks)
 
     results.sort(key=lambda r: r.get("token_count", float("inf")))
+    logger.info(f"[{req.session_id[:8]}] {len(defns)} tokenizers, {len(text)} chars")
     return {"results": results, "char_count": len(text)}
 
 
@@ -263,7 +340,7 @@ async def startup():
     logger.info("Pre-loading tiktoken tokenizers...")
     for defn in TOKENIZER_DEFS:
         if defn.type == "tiktoken":
-            get_tokenizer(defn)
+            await get_tokenizer(defn)
     logger.info("Startup complete")
 
 
