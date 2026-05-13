@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tokenizer Comparison</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Inter", "SF Pro Display", system-ui, -apple-system, sans-serif;
+    background: #f1f5f9;
+    color: #1e293b;
+    min-height: 100vh;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #4338ca 0%, #6366f1 50%, #818cf8 100%);
+    color: #fff;
+    padding: 32px 24px;
+    text-align: center;
+  }
+  .header h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+  .header p { margin-top: 6px; opacity: 0.85; font-size: 0.925rem; }
+
+  .container {
+    max-width: 95vw;
+    margin: 0 auto;
+    padding: 24px 20px 48px;
+  }
+
+  .input-section {
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.04);
+    margin-bottom: 24px;
+  }
+  .input-section textarea {
+    width: 100%;
+    min-height: 140px;
+    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 0.95rem;
+    font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+    line-height: 1.6;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-section textarea:focus { border-color: #6366f1; }
+  .input-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: #94a3b8;
+  }
+
+  .tokenizer-select {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .tokenizer-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 0.825rem;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.18s;
+    border: 2px solid #e2e8f0;
+    background: #fff;
+    color: #64748b;
+  }
+  .tokenizer-chip:hover { border-color: #c7d2fe; background: #eef2ff; }
+  .tokenizer-chip.active {
+    border-color: #6366f1;
+    background: #eef2ff;
+    color: #4338ca;
+  }
+  .tokenizer-chip .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tokenizer-chip.unavailable {
+    opacity: 0.5;
+    cursor: not-allowed;
+    text-decoration: line-through;
+  }
+
+  .results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  .result-card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    transition: transform 0.18s, box-shadow 0.18s;
+    position: relative;
+    overflow: hidden;
+  }
+  .result-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.10);
+  }
+  .result-card .provider-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+  }
+  .result-card .model-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 2px;
+  }
+  .result-card .token-count {
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin: 8px 0 2px;
+  }
+  .result-card .token-label {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    font-weight: 500;
+  }
+  .result-card .ratio {
+    margin-top: 6px;
+    font-size: 0.775rem;
+    color: #64748b;
+  }
+  .result-card .ratio span { font-weight: 600; }
+
+  .vis-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    margin: 8px 0;
+    line-height: 1;
+  }
+  .vis-bar .seg {
+    height: 12px;
+    border-radius: 2px;
+    min-width: 2px;
+  }
+  .vis-bar-wrap {
+    max-height: 72px;
+    overflow: hidden;
+    position: relative;
+  }
+  .vis-bar-wrap.expanded { max-height: none; }
+  .vis-bar-wrap.has-overflow::after {
+    content: "";
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 24px;
+    background: linear-gradient(transparent, #fff);
+    pointer-events: none;
+  }
+  .vis-bar-wrap.expanded::after { display: none; }
+
+  .vis-toggle, .toggle-detail {
+    font-size: 0.75rem;
+    color: #6366f1;
+    cursor: pointer;
+    font-weight: 500;
+    user-select: none;
+    display: inline-block;
+    margin-top: 4px;
+  }
+  .vis-toggle:hover, .toggle-detail:hover { text-decoration: underline; }
+
+  .vis-summary { font-size: 0.725rem; color: #94a3b8; }
+
+  .token-detail {
+    display: none;
+    margin-top: 10px;
+    font-size: 0.75rem;
+  }
+  .token-detail.open { display: block; }
+  .token-detail table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .token-detail th {
+    text-align: left;
+    font-size: 0.675rem;
+    color: #94a3b8;
+    font-weight: 600;
+    padding: 2px 8px 4px;
+    position: sticky;
+    top: 0;
+    background: #fff;
+  }
+  .token-detail td {
+    padding: 2px 8px;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .token-detail tr:nth-child(even) { background: #f8fafc; }
+  .detail-rows { max-height: 220px; overflow-y: auto; }
+  .detail-pager {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.725rem;
+    color: #64748b;
+    padding: 4px 0;
+  }
+  .detail-pager button {
+    background: #eef2ff;
+    color: #4f46e5;
+    border: none;
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 0.725rem;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .detail-pager button:hover { background: #e0e7ff; }
+  .detail-pager button:disabled { opacity: 0.4; cursor: default; }
+
+  .error-card {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .error-card .error-title { color: #dc2626; font-weight: 600; }
+  .error-card .error-msg { font-size: 0.8rem; color: #991b1b; margin-top: 4px; }
+
+  .spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid #e2e8f0;
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state {
+    text-align: center;
+    padding: 48px 20px;
+    color: #94a3b8;
+  }
+  .empty-state .icon { font-size: 2.5rem; margin-bottom: 10px; opacity: 0.5; }
+  .empty-state p { font-size: 0.9rem; }
+
+  .loading-indicator {
+    text-align: center;
+    padding: 24px;
+    color: #6366f1;
+    font-size: 0.875rem;
+  }
+
+  .bar-hint {
+    font-size: 0.7rem;
+    color: #94a3b8;
+    margin-bottom: 4px;
+  }
+
+  @media (max-width: 640px) {
+    .results-grid { grid-template-columns: 1fr; }
+    .header h1 { font-size: 1.35rem; }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Tokenizer Comparison</h1>
+  <p>Compare how different AI models tokenize the same text</p>
+</div>
+
+<div class="container">
+  <div class="input-section">
+    <textarea id="textInput" placeholder="Enter text to tokenize...&#10;&#10;Example: Hello world! こんにちは世界 &#10;Let's compare how different tokenizers handle this text."></textarea>
+    <div class="input-meta">
+      <span id="charCount">0 characters</span>
+      <span id="wordCount">0 words</span>
+    </div>
+  </div>
+
+  <div class="tokenizer-select" id="tokenizerSelect"></div>
+
+  <div id="resultsArea">
+    <div class="empty-state">
+      <div class="icon">&#x1F50D;</div>
+      <p>Enter text above and select tokenizers to compare</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const PROVIDER_COLORS = {
+  "OpenAI": "#10a37f",
+  "Alibaba (Qwen)": "#615ced",
+  "DeepSeek AI": "#4f5eff",
+  "Zhipu AI (GLM)": "#0284c7",
+  "Moonshot AI (Kimi)": "#e07b3c",
+  "LLM-jp": "#7c3aed",
+};
+
+const TOKEN_COLORS = [
+  "#dbeafe","#dcfce7","#fef3c7","#fce7f3","#e0e7ff",
+  "#ccfbf1","#f3e8ff","#ffedd5","#d1fae5","#e0f2fe",
+  "#fef9c3","#fce4ec","#e8eaf6","#e0f2f1","#fff3e0",
+];
+
+let allTokenizers = [];
+let activeIds = new Set();
+let debounceTimer = null;
+let lastTokenData = {};
+
+async function init() {
+  try {
+    const res = await fetch("/api/tokenizers");
+    const data = await res.json();
+    allTokenizers = data.tokenizers;
+    activeIds = new Set(allTokenizers.filter(t => t.available).map(t => t.id));
+    renderChips();
+  } catch (e) {
+    console.error("Failed to load tokenizers", e);
+  }
+}
+
+function renderChips() {
+  const container = document.getElementById("tokenizerSelect");
+  container.innerHTML = allTokenizers.map(t => {
+    const active = activeIds.has(t.id);
+    const availClass = t.available ? "" : " unavailable";
+    const color = PROVIDER_COLORS[t.provider] || "#94a3b8";
+    return `
+      <div class="tokenizer-chip${availClass}${active ? " active" : ""}"
+           data-id="${t.id}"
+           onclick="toggleTokenizer('${t.id}', ${t.available})"
+           title="${t.available ? t.name + " by " + t.provider : t.error_msg || "Unavailable"}">
+        <span class="dot" style="background:${color}"></span>
+        ${t.name}
+        <span style="font-size:0.65rem;color:#94a3b8">${t.provider}</span>
+      </div>`;
+  }).join("");
+}
+
+function toggleTokenizer(id, available) {
+  if (!available) return;
+  if (activeIds.has(id)) activeIds.delete(id); else activeIds.add(id);
+  renderChips();
+  triggerTokenize();
+}
+
+document.getElementById("textInput").addEventListener("input", () => {
+  const text = document.getElementById("textInput").value;
+  document.getElementById("charCount").textContent = text.length + " characters";
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  document.getElementById("wordCount").textContent = words + " words";
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(triggerTokenize, 350);
+});
+
+async function triggerTokenize() {
+  const text = document.getElementById("textInput").value;
+  if (!text.trim()) {
+    document.getElementById("resultsArea").innerHTML = `
+      <div class="empty-state">
+        <div class="icon">&#x1F50D;</div>
+        <p>Enter text above and select tokenizers to compare</p>
+      </div>`;
+    return;
+  }
+  if (activeIds.size === 0) {
+    document.getElementById("resultsArea").innerHTML = `
+      <div class="empty-state">
+        <div class="icon">&#x25EF;</div>
+        <p>Select at least one tokenizer above</p>
+      </div>`;
+    return;
+  }
+
+  document.getElementById("resultsArea").innerHTML =
+    '<div class="loading-indicator"><span class="spinner"></span> Tokenizing...</div>';
+
+  try {
+    const res = await fetch("/api/tokenize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text, tokenizers: [...activeIds] }),
+    });
+    const data = await res.json();
+    renderResults(data.results, data.char_count);
+  } catch (e) {
+    document.getElementById("resultsArea").innerHTML =
+      `<div class="error-card"><div class="error-title">Error</div><div class="error-msg">${e.message}</div></div>`;
+  }
+}
+
+function renderResults(results, charCount) {
+  if (!results || results.length === 0) {
+    document.getElementById("resultsArea").innerHTML =
+      `<div class="empty-state"><div class="icon">&#x26A0;</div><p>No results returned</p></div>`;
+    return;
+  }
+
+  const cards = results.map(r => {
+    if (!r.available) {
+      return `
+        <div class="error-card">
+          <div class="error-title">${r.tokenizer_name}</div>
+          <div style="font-size:0.75rem;color:#64748b;margin-bottom:2px;">${r.provider}</div>
+          <div class="error-msg">${escapeHtml(r.error || "Failed to load tokenizer")}</div>
+        </div>`;
+    }
+
+    lastTokenData[r.tokenizer_id] = { tokens: r.tokens, ids: r.token_ids };
+    const color = PROVIDER_COLORS[r.provider] || "#94a3b8";
+    const ratio = (r.token_count / Math.max(charCount, 1)).toFixed(3);
+    const visSegments = buildVisSegments(r.tokens, r.token_ids);
+    const needsFold = r.token_count > 80;
+    const foldClass = needsFold ? " has-overflow" : "";
+    const tokenPager = buildTokenPager(r.tokens, r.token_ids, r.tokenizer_id);
+
+    return `
+      <div class="result-card">
+        <span class="provider-badge" style="background:${color}15;color:${color}">${r.provider}</span>
+        <div class="model-name">${r.tokenizer_name}</div>
+        <div class="token-count" style="color:${color}">${r.token_count.toLocaleString()}</div>
+        <div class="token-label">tokens &middot; ${charCount.toLocaleString()} chars</div>
+        <div class="ratio">Ratio: <span>${ratio}</span> tokens/char</div>
+        <span class="vis-toggle" onclick="toggleVis(this)" data-expanded="false">&#x25B6; Show visualization</span>
+        <div class="vis-bar-wrap${foldClass}" style="display:none">
+          <div class="vis-bar">${visSegments}</div>
+        </div>
+        <span class="toggle-detail" onclick="toggleDetail(this)">&#x25B6; Show token list</span>
+        <div class="token-detail">${tokenPager}</div>
+      </div>`;
+  }).join("");
+
+  document.getElementById("resultsArea").innerHTML = `<div class="results-grid">${cards}</div>`;
+}
+
+function buildVisSegments(tokens, ids) {
+  const MAX_SEG = 400;
+  const displayTokens = tokens.length > MAX_SEG ? tokens.slice(0, MAX_SEG) : tokens;
+  const totalBytes = displayTokens.reduce((s, t) => s + Math.max(new Blob([t]).size, 1), 0);
+  const segs = displayTokens.map((t, i) => {
+    const byteLen = Math.max(new Blob([t]).size, 1);
+    const widthPct = Math.max((byteLen / totalBytes) * 100, 0.5);
+    const color = TOKEN_COLORS[i % TOKEN_COLORS.length];
+    return `<span class="seg" style="width:${widthPct.toFixed(1)}%;background:${color}" title="[${ids[i]}] ${escapeHtml(t)}"></span>`;
+  }).join("");
+  if (tokens.length > MAX_SEG) {
+    return segs + `<span style="font-size:0.7rem;color:#94a3b8;margin-left:4px;">&hellip; and ${tokens.length - MAX_SEG} more tokens</span>`;
+  }
+  return segs;
+}
+
+function toggleVis(el) {
+  const wrap = el.nextElementSibling;
+  const expanded = el.dataset.expanded === "true";
+  if (expanded) {
+    wrap.style.display = "none";
+    el.dataset.expanded = "false";
+    el.innerHTML = "&#x25B6; Show visualization";
+  } else {
+    wrap.style.display = "block";
+    el.dataset.expanded = "true";
+    el.innerHTML = "&#x25BC; Hide visualization";
+  }
+}
+
+function buildTokenPager(tokens, ids, tid) {
+  const PAGE = 50;
+  const totalPages = Math.ceil(tokens.length / PAGE);
+  const page = 1;
+  const start = 0;
+  const end = Math.min(PAGE, tokens.length);
+  const rows = [];
+  for (let i = start; i < end; i++) {
+    rows.push(`<tr><td style="color:#94a3b8">${i}</td><td style="color:#64748b">${ids[i]}</td><td>${escapeHtml(tokens[i])}</td></tr>`);
+  }
+  const pagerHtml = totalPages > 1
+    ? `<div class="detail-pager">
+         <button class="prev-page" disabled data-tid="${tid}" data-page="1">&laquo; Prev</button>
+         <span class="page-info">1 / ${totalPages}</span>
+         <button class="next-page" data-tid="${tid}" data-page="1">Next &raquo;</button>
+       </div>`
+    : "";
+  const tableId = `dtable-${tid}`;
+  return pagerHtml +
+    `<div class="detail-rows" id="${tableId}">
+      <table>
+        <tr><th>#</th><th>ID</th><th>Text</th></tr>
+        ${rows.join("")}
+      </table>
+    </div>`;
+}
+
+function toggleDetail(el) {
+  const detail = el.nextElementSibling;
+  const isOpen = detail.classList.toggle("open");
+  el.innerHTML = isOpen ? "&#x25BC; Hide token list" : "&#x25B6; Show token list";
+  if (isOpen) {
+    bindPagerButtons(detail);
+  }
+}
+
+function bindPagerButtons(detail) {
+  detail.querySelectorAll(".prev-page, .next-page").forEach(btn => {
+    btn.onclick = function() {
+      const tid = this.dataset.tid;
+      const page = parseInt(this.dataset.page);
+      const isNext = this.classList.contains("next-page");
+      const newPage = isNext ? page + 1 : page - 1;
+      const tokenData = lastTokenData[tid];
+      if (!tokenData) return;
+      const { tokens, ids } = tokenData;
+      const PAGE = 50;
+      const totalPages = Math.ceil(tokens.length / PAGE);
+      const start = (newPage - 1) * PAGE;
+      const end = Math.min(start + PAGE, tokens.length);
+      const rows = [];
+      for (let i = start; i < end; i++) {
+        rows.push(`<tr><td style="color:#94a3b8">${i}</td><td style="color:#64748b">${ids[i]}</td><td>${escapeHtml(tokens[i])}</td></tr>`);
+      }
+      const tableId = `dtable-${tid}`;
+      const container = document.getElementById(tableId);
+      container.innerHTML = `<table><tr><th>#</th><th>ID</th><th>Text</th></tr>${rows.join("")}</table>`;
+
+      const pagerDiv = detail.querySelector(".detail-pager");
+      pagerDiv.querySelector(".page-info").textContent = `${newPage} / ${totalPages}`;
+      pagerDiv.querySelector(".prev-page").disabled = newPage <= 1;
+      pagerDiv.querySelector(".prev-page").dataset.page = newPage;
+      pagerDiv.querySelector(".next-page").disabled = newPage >= totalPages;
+      pagerDiv.querySelector(".next-page").dataset.page = newPage;
+    };
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>
