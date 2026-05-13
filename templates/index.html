@@ -91,9 +91,8 @@
     flex-shrink: 0;
   }
   .tokenizer-chip.unavailable {
-    opacity: 0.5;
-    cursor: not-allowed;
-    text-decoration: line-through;
+    opacity: 0.55;
+    border-style: dashed;
   }
 
   .results-grid {
@@ -368,8 +367,7 @@ function renderChips() {
 }
 
 function toggleTokenizer(id, available) {
-  if (!available) return;
-  if (activeIds.has(id)) activeIds.delete(id); else activeIds.add(id);
+  if (activeIds.has(id)) { activeIds.delete(id); } else { activeIds.add(id); }
   renderChips();
   triggerTokenize();
 }
