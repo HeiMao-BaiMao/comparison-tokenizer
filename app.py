@@ -1,12 +1,16 @@
 import logging
+import os
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import tiktoken
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,6 +42,7 @@ class TokenizerDef:
     model_id: Optional[str] = None
     model_path: Optional[str] = None
     trust_remote_code: bool = False
+    hf_token_env: Optional[str] = None
     available: bool = True
     error_msg: Optional[str] = None
 
@@ -100,6 +105,8 @@ TOKENIZER_DEFS = [
         provider="Preferred Networks",
         type="transformers",
         model_id="pfnet/plamo-3-nict-2b-base",
+        trust_remote_code=True,
+        hf_token_env="plamo_token",
     ),
     TokenizerDef(
         id="gemma4",
@@ -133,10 +140,17 @@ def get_tokenizer(defn: TokenizerDef):
         elif defn.type == "transformers":
             if not HAS_TRANSFORMERS:
                 raise ImportError("transformers package not installed")
-            tokenizer = AutoTokenizer.from_pretrained(
-                defn.model_id,
-                trust_remote_code=defn.trust_remote_code,
-            )
+            kwargs = {"trust_remote_code": defn.trust_remote_code}
+            if defn.hf_token_env:
+                token = os.getenv(defn.hf_token_env)
+                if token:
+                    kwargs["token"] = token
+                else:
+                    raise ValueError(
+                        f"Environment variable '{defn.hf_token_env}' not set. "
+                        "Set it or create a .env file with this key."
+                    )
+            tokenizer = AutoTokenizer.from_pretrained(defn.model_id, **kwargs)
             _tokenizer_cache[defn.id] = tokenizer
             return tokenizer
         elif defn.type == "sentencepiece":
