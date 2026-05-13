@@ -87,6 +87,35 @@ TOKENIZER_DEFS = [
         type="sentencepiece",
         model_path="SentencePiece/llm-jp-tokenizer_ver4.0_alpha1.0.model",
     ),
+    TokenizerDef(
+        id="lfm25",
+        name="LFM 2.5",
+        provider="Liquid AI",
+        type="transformers",
+        model_id="LiquidAI/LFM2.5-350M",
+    ),
+    TokenizerDef(
+        id="plamo3",
+        name="PLaMo 3",
+        provider="Preferred Networks",
+        type="transformers",
+        model_id="pfnet/plamo-3-nict-2b-base",
+    ),
+    TokenizerDef(
+        id="gemma4",
+        name="Gemma 4",
+        provider="Google (Gemma)",
+        type="transformers",
+        model_id="google/gemma-4-E2B-it",
+    ),
+    TokenizerDef(
+        id="minimax-m27",
+        name="MiniMax M2.7",
+        provider="MiniMax",
+        type="transformers",
+        model_id="MiniMaxAI/MiniMax-M2.7",
+        trust_remote_code=True,
+    ),
 ]
 
 _tokenizer_cache = {}
