@@ -57,6 +57,24 @@
     font-size: 0.8rem;
     color: #94a3b8;
   }
+  .tokenize-btn {
+    display: block;
+    width: 100%;
+    margin-top: 14px;
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #4338ca, #6366f1);
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.1s;
+    letter-spacing: 0.01em;
+  }
+  .tokenize-btn:hover { opacity: 0.92; transform: translateY(-1px); }
+  .tokenize-btn:active { transform: translateY(0); }
+  .tokenize-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
 
   .tokenizer-select {
     display: flex;
@@ -299,6 +317,7 @@
       <span id="charCount">0 characters</span>
       <span id="wordCount">0 words</span>
     </div>
+    <button class="tokenize-btn" id="tokenizeBtn" onclick="triggerTokenize()">Compare Tokenizers</button>
   </div>
 
   <div class="tokenizer-select" id="tokenizerSelect"></div>
@@ -333,7 +352,6 @@ const TOKEN_COLORS = [
 
 let allTokenizers = [];
 let activeIds = new Set();
-let debounceTimer = null;
 let lastTokenData = {};
 let sessionId = "";
 
@@ -388,8 +406,10 @@ document.getElementById("textInput").addEventListener("input", () => {
   document.getElementById("charCount").textContent = text.length + " characters";
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
   document.getElementById("wordCount").textContent = words + " words";
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(triggerTokenize, 350);
+});
+
+document.getElementById("textInput").addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key === "Enter") triggerTokenize();
 });
 
 async function triggerTokenize() {
@@ -398,7 +418,7 @@ async function triggerTokenize() {
     document.getElementById("resultsArea").innerHTML = `
       <div class="empty-state">
         <div class="icon">&#x1F50D;</div>
-        <p>Enter text above and select tokenizers to compare</p>
+        <p>Enter text above and click Compare Tokenizers</p>
       </div>`;
     return;
   }
@@ -411,6 +431,9 @@ async function triggerTokenize() {
     return;
   }
 
+  const btn = document.getElementById("tokenizeBtn");
+  btn.disabled = true;
+  btn.textContent = "Tokenizing...";
   document.getElementById("resultsArea").innerHTML =
     '<div class="loading-indicator"><span class="spinner"></span> Tokenizing...</div>';
 
@@ -431,6 +454,9 @@ async function triggerTokenize() {
   } catch (e) {
     document.getElementById("resultsArea").innerHTML =
       `<div class="error-card"><div class="error-title">Error</div><div class="error-msg">${e.message}</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Compare Tokenizers";
   }
 }
 
