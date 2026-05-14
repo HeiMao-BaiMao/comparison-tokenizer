@@ -234,13 +234,7 @@ def _run_sentencepiece(tokenizer, text: str):
 def _run_transformers(tokenizer, text: str):
     encoding = tokenizer.encode(text)
     token_ids = encoding.ids if hasattr(encoding, "ids") else encoding
-    tokens = []
-    for token_id in token_ids:
-        try:
-            decoded = tokenizer.decode([token_id])
-            tokens.append(decoded if decoded else f"[{token_id}]")
-        except Exception:
-            tokens.append(f"[{token_id}]")
+    tokens = tokenizer.convert_ids_to_tokens(token_ids)
     return token_ids, tokens
 
 
