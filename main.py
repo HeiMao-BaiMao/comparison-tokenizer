@@ -1,13 +1,15 @@
 import asyncio
+import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import tiktoken
@@ -66,7 +68,72 @@ class TokenizerDef:
     error_msg: Optional[str] = None
 
 
-TOKENIZER_DEFS = [
+CUSTOM_DIR = Path(__file__).parent / "custom_tokenizers"
+CUSTOM_CONFIG = CUSTOM_DIR / "config.json"
+
+_custom_defs: list[TokenizerDef] = []
+
+
+def _load_custom_defs():
+    global _custom_defs
+    CUSTOM_DIR.mkdir(exist_ok=True)
+    config_data = {}
+    if CUSTOM_CONFIG.exists():
+        try:
+            config_data = {item["id"]: item for item in json.loads(CUSTOM_CONFIG.read_text("utf-8"))}
+        except Exception as e:
+            logger.warning(f"Failed to load custom tokenizer config: {e}")
+
+    _custom_defs = []
+
+    discovered = set()
+
+    for model_file in sorted(CUSTOM_DIR.glob("*.model")):
+        tid = model_file.stem
+        if tid in discovered:
+            continue
+        discovered.add(tid)
+        info = config_data.get(tid, {})
+        model_rel = f"custom_tokenizers/{tid}.model"
+        _custom_defs.append(TokenizerDef(
+            id=tid,
+            name=info.get("name", tid.replace("-", " ").title().replace("Hmbm", "HMBM")),
+            provider=info.get("provider", "Custom"),
+            type=info.get("type", "sentencepiece"),
+            model_path=model_rel,
+            model_id=info.get("model_id"),
+            encoding=info.get("encoding"),
+            trust_remote_code=info.get("trust_remote_code", False),
+            hf_token_env=info.get("hf_token_env"),
+        ))
+
+    for subdir in sorted(CUSTOM_DIR.glob("*/")):
+        tid = subdir.name
+        if tid in discovered:
+            continue
+        model_file = subdir / "model"
+        if model_file.exists():
+            discovered.add(tid)
+            info = config_data.get(tid, {})
+            model_rel = f"custom_tokenizers/{tid}/model"
+            _custom_defs.append(TokenizerDef(
+                id=tid,
+                name=info.get("name", tid.replace("-", " ").title()),
+                provider=info.get("provider", "Custom"),
+                type=info.get("type", "sentencepiece"),
+                model_path=model_rel,
+                model_id=info.get("model_id"),
+                encoding=info.get("encoding"),
+                trust_remote_code=info.get("trust_remote_code", False),
+                hf_token_env=info.get("hf_token_env"),
+            ))
+
+
+def get_all_defs():
+    return BUILTIN_DEFS + _custom_defs
+
+
+BUILTIN_DEFS = [
     TokenizerDef(
         id="gpt4o",
         name="GPT-4o / GPT-4.1",
@@ -291,8 +358,9 @@ async def index():
 
 @app.get("/api/tokenizers")
 async def list_tokenizers():
+    builtin_ids = {d.id for d in BUILTIN_DEFS}
     result = []
-    for d in TOKENIZER_DEFS:
+    for d in get_all_defs():
         tokenizer = await get_tokenizer(d)
         result.append({
             "id": d.id,
@@ -301,6 +369,7 @@ async def list_tokenizers():
             "type": d.type,
             "available": d.available,
             "error_msg": d.error_msg,
+            "custom": d.id not in builtin_ids,
         })
     return {"tokenizers": result}
 
@@ -317,7 +386,7 @@ async def tokenize(req: TokenizeRequest):
             status_code=429,
         )
 
-    defns = [d for d in TOKENIZER_DEFS if d.id in req.tokenizers]
+    defns = [d for d in get_all_defs() if d.id in req.tokenizers]
     if not defns:
         return JSONResponse({"error": "No valid tokenizers selected"}, status_code=400)
 
@@ -329,13 +398,95 @@ async def tokenize(req: TokenizeRequest):
     return {"results": results, "char_count": len(text)}
 
 
+@app.post("/api/tokenizers/custom")
+async def add_custom_tokenizer(
+    name: str = Form(...),
+    provider: str = Form("Custom"),
+    model: UploadFile = File(...),
+    vocab: UploadFile | None = None,
+):
+    tokenizer_id = name.lower().replace(" ", "-").replace("_", "-")
+    tokenizer_id = "".join(c for c in tokenizer_id if c.isalnum() or c == "-")
+    if not tokenizer_id:
+        raise HTTPException(400, "Invalid tokenizer name")
+
+    existing_ids = {d.id for d in get_all_defs()}
+    if tokenizer_id in existing_ids:
+        raise HTTPException(400, f"Tokenizer ID '{tokenizer_id}' already exists")
+
+    CUSTOM_DIR.mkdir(exist_ok=True)
+
+    model_bytes = await model.read()
+    (CUSTOM_DIR / f"{tokenizer_id}.model").write_bytes(model_bytes)
+
+    if vocab:
+        vocab_bytes = await vocab.read()
+        (CUSTOM_DIR / f"{tokenizer_id}.vocab").write_bytes(vocab_bytes)
+
+    is_sp = model.filename and model.filename.endswith(".model")
+
+    if not CUSTOM_CONFIG.exists():
+        CUSTOM_CONFIG.write_text("[]", "utf-8")
+
+    config_data = json.loads(CUSTOM_CONFIG.read_text("utf-8"))
+    config_data.append({
+        "id": tokenizer_id,
+        "name": name,
+        "provider": provider,
+        "type": "sentencepiece" if is_sp else "transformers",
+    })
+    CUSTOM_CONFIG.write_text(json.dumps(config_data, indent=2, ensure_ascii=False), "utf-8")
+
+    _load_custom_defs()
+
+    return {
+        "id": tokenizer_id,
+        "name": name,
+        "provider": provider,
+        "type": "sentencepiece" if is_sp else "transformers",
+        "available": True,
+        "created": True,
+    }
+
+
+@app.delete("/api/tokenizers/custom/{tokenizer_id}")
+async def remove_custom_tokenizer(tokenizer_id: str):
+    existing_ids = {d.id for d in BUILTIN_DEFS}
+    if tokenizer_id in existing_ids:
+        raise HTTPException(400, "Cannot remove built-in tokenizer")
+
+    matching = [i for i, d in enumerate(_custom_defs) if d.id == tokenizer_id]
+    if not matching:
+        raise HTTPException(404, f"Custom tokenizer '{tokenizer_id}' not found")
+
+    idx = matching[0]
+    removed = _custom_defs.pop(idx)
+
+    for path in CUSTOM_DIR.glob(f"{tokenizer_id}.*"):
+        path.unlink()
+    tok_dir = CUSTOM_DIR / tokenizer_id
+    if tok_dir.is_dir():
+        shutil.rmtree(tok_dir)
+
+    if CUSTOM_CONFIG.exists():
+        config_data = json.loads(CUSTOM_CONFIG.read_text("utf-8"))
+        config_data = [item for item in config_data if item.get("id") != tokenizer_id]
+        CUSTOM_CONFIG.write_text(json.dumps(config_data, indent=2, ensure_ascii=False), "utf-8")
+
+    _tokenizer_cache.pop(removed.id, None)
+    _load_locks.pop(removed.id, None)
+
+    return {"removed": tokenizer_id, "success": True}
+
+
 @app.on_event("startup")
 async def startup():
     logger.info("Pre-loading tiktoken tokenizers...")
-    for defn in TOKENIZER_DEFS:
+    for defn in BUILTIN_DEFS:
         if defn.type == "tiktoken":
             await get_tokenizer(defn)
-    logger.info("Startup complete")
+    _load_custom_defs()
+    logger.info(f"Startup complete ({len(get_all_defs())} tokenizers: {len(BUILTIN_DEFS)} builtin + {len(_custom_defs)} custom)")
 
 
 if __name__ == "__main__":

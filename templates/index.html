@@ -298,6 +298,116 @@
     margin-bottom: 4px;
   }
 
+  .tokenizer-chip .delete-btn {
+    margin-left: 2px;
+    cursor: pointer;
+    color: #94a3b8;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 2px;
+    border-radius: 50%;
+  }
+  .tokenizer-chip .delete-btn:hover {
+    color: #ef4444;
+    background: #fef2f2;
+  }
+
+  .custom-form-wrap {
+    margin-bottom: 24px;
+  }
+  .add-custom-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 0.825rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 2px dashed #c7d2fe;
+    background: #eef2ff;
+    color: #6366f1;
+    transition: all 0.18s;
+  }
+  .add-custom-btn:hover { background: #e0e7ff; border-color: #6366f1; }
+
+  .custom-form {
+    display: none;
+    margin-top: 12px;
+    padding: 20px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    max-width: 420px;
+  }
+  .custom-form.open { display: block; }
+  .custom-form label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #475569;
+    margin: 10px 0 4px;
+  }
+  .custom-form label:first-child { margin-top: 0; }
+  .custom-form input[type="text"] {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    outline: none;
+  }
+  .custom-form input[type="text"]:focus { border-color: #6366f1; }
+  .custom-form input[type="file"] {
+    font-size: 0.8rem;
+    padding: 4px 0;
+  }
+  .custom-form .form-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .custom-form .submit-btn {
+    padding: 8px 18px;
+    background: #6366f1;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.825rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .custom-form .submit-btn:hover { opacity: 0.9; }
+  .custom-form .submit-btn:disabled { opacity: 0.5; cursor: default; }
+  .custom-form .cancel-btn {
+    padding: 8px 18px;
+    background: #f1f5f9;
+    color: #475569;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.825rem;
+    cursor: pointer;
+  }
+  .custom-form .cancel-btn:hover { background: #e2e8f0; }
+  .custom-form .form-error {
+    color: #dc2626;
+    font-size: 0.775rem;
+    margin-top: 8px;
+    display: none;
+  }
+
+  .badge-custom {
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: #fef3c7;
+    color: #92400e;
+    margin-left: 4px;
+  }
+
   @media (max-width: 640px) {
     .results-grid { grid-template-columns: 1fr; }
     .header h1 { font-size: 1.35rem; }
@@ -322,6 +432,29 @@
 
   <div class="tokenizer-select" id="tokenizerSelect"></div>
 
+  <div class="custom-form-wrap">
+    <button class="add-custom-btn" id="addCustomBtn" onclick="toggleCustomForm()">＋ Add Custom Tokenizer</button>
+    <div class="custom-form" id="customForm">
+      <label for="customName">Name <span class="badge-custom">required</span></label>
+      <input type="text" id="customName" placeholder="e.g. My SentencePiece Tokenizer">
+
+      <label for="customProvider">Provider</label>
+      <input type="text" id="customProvider" placeholder="e.g. Custom (default)">
+
+      <label for="customModel">Model file <span class="badge-custom">required</span></label>
+      <input type="file" id="customModel" accept=".model">
+
+      <label for="customVocab">Vocab file</label>
+      <input type="file" id="customVocab" accept=".vocab">
+
+      <div class="form-error" id="formError"></div>
+      <div class="form-actions">
+        <button class="submit-btn" id="submitCustomBtn" onclick="submitCustom()">Add Tokenizer</button>
+        <button class="cancel-btn" onclick="toggleCustomForm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="resultsArea">
     <div class="empty-state">
       <div class="icon">&#x1F50D;</div>
@@ -342,6 +475,7 @@ const PROVIDER_COLORS = {
   "Preferred Networks": "#2563eb",
   "Google (Gemma)": "#ea4335",
   "MiniMax": "#f59e0b",
+  "HMBM": "#8b5cf6",
 };
 
 const TOKEN_COLORS = [
@@ -383,14 +517,19 @@ function renderChips() {
     const active = activeIds.has(t.id);
     const availClass = t.available ? "" : " unavailable";
     const color = PROVIDER_COLORS[t.provider] || "#94a3b8";
+    const customBadge = t.custom ? '<span class="badge-custom">custom</span>' : "";
+    const deleteBtn = t.custom
+      ? `<span class="delete-btn" onclick="event.stopPropagation();deleteCustom('${t.id}')" title="Remove">&times;</span>`
+      : "";
     return `
       <div class="tokenizer-chip${availClass}${active ? " active" : ""}"
            data-id="${t.id}"
            onclick="toggleTokenizer('${t.id}', ${t.available})"
            title="${t.available ? t.name + " by " + t.provider : t.error_msg || "Unavailable"}">
         <span class="dot" style="background:${color}"></span>
-        ${t.name}
+        ${t.name}${customBadge}
         <span style="font-size:0.65rem;color:#94a3b8">${t.provider}</span>
+        ${deleteBtn}
       </div>`;
   }).join("");
 }
@@ -600,6 +739,86 @@ function bindPagerButtons(detail) {
       pagerDiv.querySelector(".next-page").dataset.page = newPage;
     };
   });
+}
+
+function toggleCustomForm() {
+  const form = document.getElementById("customForm");
+  const isOpen = form.classList.toggle("open");
+  document.getElementById("addCustomBtn").textContent = isOpen ? "－ Cancel" : "＋ Add Custom Tokenizer";
+  if (!isOpen) {
+    document.getElementById("customName").value = "";
+    document.getElementById("customProvider").value = "";
+    document.getElementById("customModel").value = "";
+    document.getElementById("customVocab").value = "";
+    document.getElementById("formError").style.display = "none";
+  }
+}
+
+async function submitCustom() {
+  const name = document.getElementById("customName").value.trim();
+  const provider = document.getElementById("customProvider").value.trim() || "Custom";
+  const modelFile = document.getElementById("customModel").files[0];
+  const vocabFile = document.getElementById("customVocab").files[0];
+  const errEl = document.getElementById("formError");
+
+  if (!name) { errEl.textContent = "Name is required."; errEl.style.display = "block"; return; }
+  if (!modelFile) { errEl.textContent = "Model file is required."; errEl.style.display = "block"; return; }
+
+  const btn = document.getElementById("submitCustomBtn");
+  btn.disabled = true;
+  btn.textContent = "Uploading...";
+  errEl.style.display = "none";
+
+  try {
+    const formData = new FormData();
+    formData.append("name", name);
+    formData.append("provider", provider);
+    formData.append("model", modelFile);
+    if (vocabFile) formData.append("vocab", vocabFile);
+
+    const res = await fetch("/api/tokenizers/custom", { method: "POST", body: formData });
+    const data = await res.json();
+
+    if (!res.ok) {
+      errEl.textContent = data.detail || "Failed to add tokenizer";
+      errEl.style.display = "block";
+      return;
+    }
+
+    const tokenizerList = await fetch("/api/tokenizers");
+    const listData = await tokenizerList.json();
+    allTokenizers = listData.tokenizers;
+    activeIds.add(data.id);
+    renderChips();
+    toggleCustomForm();
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.style.display = "block";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Add Tokenizer";
+  }
+}
+
+async function deleteCustom(id) {
+  if (!confirm(`Remove custom tokenizer "${id}"?`)) return;
+
+  try {
+    const res = await fetch(`/api/tokenizers/custom/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.detail || "Failed to remove tokenizer");
+      return;
+    }
+    activeIds.delete(id);
+    const tokenizerList = await fetch("/api/tokenizers");
+    const listData = await tokenizerList.json();
+    allTokenizers = listData.tokenizers;
+    renderChips();
+    triggerTokenize();
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 function escapeHtml(str) {

@@ -1,3 +1,8 @@
 __pycache__
 .venv
 .env
+/.cocoindex_code
+/custom_tokenizers/*.json
+/custom_tokenizers/*.vocab
+/custom_tokenizers/*.model
+/custom_tokenizers/*/
