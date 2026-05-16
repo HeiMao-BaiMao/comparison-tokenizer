@@ -294,14 +294,14 @@ def _run_tiktoken(tokenizer, text: str):
 
 def _run_sentencepiece(tokenizer, text: str):
     token_ids = tokenizer.encode(text)
-    tokens = [tokenizer.id_to_piece(token_id) for token_id in token_ids]
+    tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
     return token_ids, tokens
 
 
 def _run_transformers(tokenizer, text: str):
     encoding = tokenizer.encode(text)
     token_ids = encoding.ids if hasattr(encoding, "ids") else encoding
-    tokens = tokenizer.convert_ids_to_tokens(token_ids)
+    tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
     return token_ids, tokens
 
 
