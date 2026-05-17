@@ -294,14 +294,62 @@ def _run_tiktoken(tokenizer, text: str):
 
 def _run_sentencepiece(tokenizer, text: str):
     token_ids = tokenizer.encode(text)
-    tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
+    tokens = [tokenizer.id_to_piece(token_id) for token_id in token_ids]
     return token_ids, tokens
+
+
+def _make_standard_byte_decoder():
+    bs = (
+        list(range(ord("!"), ord("~") + 1))
+        + list(range(ord("¡"), ord("¬") + 1))
+        + list(range(ord("®"), ord("ÿ") + 1))
+    )
+    cs = bs[:]
+    n = 0
+    for b in range(256):
+        if b not in bs:
+            bs.append(b)
+            cs.append(256 + n)
+            n += 1
+    return {chr(c): b for b, c in zip(bs, cs)}
+
+
+_STANDARD_BYTE_DECODER = _make_standard_byte_decoder()
+
+
+def _get_byte_decoder(tokenizer):
+    if hasattr(tokenizer, "backend_tokenizer"):
+        return None
+    bd = getattr(tokenizer, "byte_decoder", None)
+    if bd is not None:
+        return bd
+    return _STANDARD_BYTE_DECODER
+
+
+def _cleanup_byte_tokens(tokens, byte_decoder):
+    if not byte_decoder:
+        return tokens
+    out = []
+    for token in tokens:
+        parts = []
+        changed = False
+        for ch in token:
+            if ord(ch) > 127 and ch in byte_decoder:
+                parts.append(f"<0x{byte_decoder[ch]:02X}>")
+                changed = True
+            else:
+                parts.append(ch)
+        out.append("".join(parts) if changed else token)
+    return out
 
 
 def _run_transformers(tokenizer, text: str):
     encoding = tokenizer.encode(text)
     token_ids = encoding.ids if hasattr(encoding, "ids") else encoding
-    tokens = [tokenizer.decode([token_id]) for token_id in token_ids]
+    tokens = tokenizer.convert_ids_to_tokens(token_ids)
+    byte_decoder = _get_byte_decoder(tokenizer)
+    if byte_decoder:
+        tokens = _cleanup_byte_tokens(tokens, byte_decoder)
     return token_ids, tokens
 
 
