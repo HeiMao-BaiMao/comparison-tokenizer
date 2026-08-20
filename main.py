@@ -172,6 +172,14 @@ BUILTIN_DEFS = [
         trust_remote_code=True,
     ),
     TokenizerDef(
+        id="kimi-k3",
+        name="Kimi K3",
+        provider="Moonshot AI (Kimi)",
+        type="transformers",
+        model_id="moonshotai/Kimi-K3",
+        trust_remote_code=True,
+    ),
+    TokenizerDef(
         id="llm-jp-v4",
         name="LLM-jp v4",
         provider="LLM-jp",
@@ -207,6 +215,14 @@ BUILTIN_DEFS = [
         provider="MiniMax",
         type="transformers",
         model_id="MiniMaxAI/MiniMax-M2.7",
+        trust_remote_code=True,
+    ),
+    TokenizerDef(
+        id="minimax-m3",
+        name="MiniMax M3",
+        provider="MiniMax",
+        type="transformers",
+        model_id="MiniMaxAI/MiniMax-M3",
         trust_remote_code=True,
     ),
 ]
